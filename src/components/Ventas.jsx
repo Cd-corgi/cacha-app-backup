@@ -1,6 +1,6 @@
 import { useState, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { iniciarEscucha, detenerEscucha } from "../utils/Voz";
+import { iniciarEscucha, detenerEscucha } from "../utils/voz";
 import { db } from "../db";
 
 // Función mejorada para quitar tildes, mayúsculas y signos de puntuación

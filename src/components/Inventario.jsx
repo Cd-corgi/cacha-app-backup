@@ -49,11 +49,18 @@ export default function Inventario() {
       return alert("Llene los campos");
     await db.productos.add({
       nombre: nuevoProd.nombre,
+      codigo_barras: nuevoProd.codigo_barras || null,
       precio: parseFloat(nuevoProd.precio),
       stock: parseInt(nuevoProd.stock),
       fecha_vencimiento: nuevoProd.fecha_vencimiento || "Sin fecha",
     });
-    setNuevoProd({ nombre: "", precio: "", stock: "", fecha_vencimiento: "" });
+    setNuevoProd({
+      nombre: "",
+      codigo_barras: "",
+      precio: "",
+      stock: "",
+      fecha_vencimiento: "",
+    });
   };
 
   const eliminarProducto = async (id) => {
@@ -399,17 +406,7 @@ export default function Inventario() {
               }
               style={{ marginBottom: "10px" }}
             />
-            <div className="modal-botones">
-              <button
-                className="btn-cancelar"
-                onClick={() => setEditando(null)}
-              >
-                Cancelar
-              </button>
-              <button className="btn-primario" onClick={guardarEdicion}>
-                Guardar
-              </button>
-            </div>
+            <div className="modal-botones">...</div>
           </div>
         </div>
       )}
