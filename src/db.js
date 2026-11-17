@@ -12,8 +12,8 @@ db.version(1).stores({
   detalle_facturas: "++id, factura_id",
 });
 
-// Añadimos la versión 3 (asumiendo que ya tenías la 2) para incluir el código de barras
-db.version(3).stores({
+// Subimos a la versión 4 para agregar el código de barras
+db.version(4).stores({
   productos: "++id, nombre, fecha_vencimiento, codigo_barras",
   ventas: "++id, fecha, metodo_pago",
   detalle_ventas: "++id, venta_id, producto_id",

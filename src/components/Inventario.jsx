@@ -27,6 +27,7 @@ const numerosPalabras = {
 export default function Inventario() {
   const [nuevoProd, setNuevoProd] = useState({
     nombre: "",
+    codigo_barras: "",
     precio: "",
     stock: "",
     fecha_vencimiento: "",
@@ -49,7 +50,7 @@ export default function Inventario() {
       return alert("Llene los campos");
     await db.productos.add({
       nombre: nuevoProd.nombre,
-      codigo_barras: nuevoProd.codigo_barras || null,
+      codigo_barras: nuevoProd.codigo_barras.trim() || null,
       precio: parseFloat(nuevoProd.precio),
       stock: parseInt(nuevoProd.stock),
       fecha_vencimiento: nuevoProd.fecha_vencimiento || "Sin fecha",
@@ -277,6 +278,14 @@ export default function Inventario() {
             }
           />
           <input
+            type="text"
+            placeholder="Código de Barras (Opcional)"
+            value={nuevoProd.codigo_barras}
+            onChange={(e) =>
+              setNuevoProd({ ...nuevoProd, codigo_barras: e.target.value })
+            }
+          />
+          <input
             type="number"
             placeholder="Precio Venta"
             value={nuevoProd.precio}
@@ -383,6 +392,15 @@ export default function Inventario() {
               value={editando.precio}
               onChange={(e) =>
                 setEditando({ ...editando, precio: parseFloat(e.target.value) })
+              }
+              style={{ marginBottom: "10px" }}
+            />
+            <input
+              type="text"
+              placeholder="Código de Barras"
+              value={editando.codigo_barras || ""}
+              onChange={(e) =>
+                setEditando({ ...editando, codigo_barras: e.target.value })
               }
               style={{ marginBottom: "10px" }}
             />

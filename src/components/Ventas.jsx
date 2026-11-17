@@ -2,6 +2,10 @@ import { useState, useRef } from "react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { iniciarEscucha, detenerEscucha } from "../utils/voz";
 import { db } from "../db";
+import { Capacitor } from "@capacitor/core";
+import EscanerWebcam from "./EscanearWebcam";
+import { escanearCodigoNativo } from "../utils/camara";
+import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning"; // <-- NUEVO
 
 // Función mejorada para quitar tildes, mayúsculas y signos de puntuación
 const normalizarTexto = (texto) => {
@@ -65,6 +69,61 @@ const palabrasRelleno = [
   "y",
 ];
 
+// const buscarProductoPorCodigo = async (codigoEscaneado) => {
+//   // 1. Búsqueda exacta
+//   let producto = await db.productos
+//     .where("codigo_barras")
+//     .equals(codigoEscaneado)
+//     .first();
+
+//   // 2. Búsqueda por prefijo (primeros 7 dígitos)
+//   if (!producto && codigoEscaneado.length >= 7) {
+//     const prefijo = codigoEscaneado.substring(0, 7);
+//     const todos = await db.productos.toArray();
+//     producto = todos.find(
+//       (p) => p.codigo_barras && p.codigo_barras.startsWith(prefijo),
+//     );
+//   }
+
+//   if (producto) {
+//     if (producto.stock <= 0)
+//       return alert(`El producto "${producto.nombre}" está agotado.`);
+
+//     setCarrito((prev) => {
+//       const existe = prev.find((item) => item.id === producto.id);
+//       if (existe)
+//         return prev.map((item) =>
+//           item.id === producto.id
+//             ? { ...item, cantidad: item.cantidad + 1 }
+//             : item,
+//         );
+//       return [...prev, { ...producto, cantidad: 1 }];
+//     });
+
+//     if ("speechSynthesis" in window) {
+//       const msg = new SpeechSynthesisUtterance(`1 ${producto.nombre} agregado`);
+//       msg.lang = "es-CO";
+//       window.speechSynthesis.speak(msg);
+//     }
+//   } else {
+//     setBusqueda(codigoEscaneado); // Lo pone en el buscador manual para asociarlo
+//     alert(
+//       `Código "${codigoEscaneado}" no registrado. Búscalo manualmente y guárdalo en el inventario.`,
+//     );
+//   }
+// };
+
+// const abrirEscaner = async () => {
+//   if (Capacitor.isNativePlatform()) {
+//     // Android: Usa cámara nativa
+//     const codigo = await escanearCodigoNativo();
+//     if (codigo) buscarProductoPorCodigo(codigo);
+//   } else {
+//     // Windows: Usa la webcam
+//     setShowScanner(true);
+//   }
+// };
+
 const extraerCantidadYProducto = (textoOriginal) => {
   const textoNorm = normalizarTexto(textoOriginal);
   let palabras = textoNorm.split(" ");
@@ -98,9 +157,91 @@ export default function Ventas() {
   const [metodoPago, setMetodoPago] = useState("Efectivo");
   const [escuchando, setEscuchando] = useState(false);
   const [mostrarLista, setMostrarLista] = useState(false);
+  const [showScanner, setShowScanner] = useState(false);
+
+  const escanearConAndroid = async () => {
+    try {
+      // 1. Pedir permisos de cámara al sistema
+      const { camera } = await BarcodeScanner.requestPermissions();
+
+      if (camera === "granted" || camera === "limited") {
+        // 2. Abrir el escáner nativo de Google
+        const { barcodes } = await BarcodeScanner.scan();
+
+        // 3. Si detectó un código, procesarlo
+        if (barcodes.length > 0) {
+          const codigo = barcodes[0].rawValue;
+          buscarProductoPorCodigo(codigo);
+        }
+      } else {
+        alert(
+          "Permiso de cámara denegado. Debes activarlo en los ajustes de tu teléfono.",
+        );
+      }
+    } catch (error) {
+      console.error("Error al escanear en Android:", error);
+      alert("Hubo un error al abrir el escáner.");
+    }
+  };
 
   const cantidadInputRef = useRef(null);
   const productos = useLiveQuery(() => db.productos.toArray()) || [];
+
+  const buscarProductoPorCodigo = async (codigoEscaneado) => {
+    if (!codigoEscaneado) return;
+    const codigoLimpio = codigoEscaneado.trim();
+    console.log("Código escaneado:", codigoLimpio);
+
+    let producto = await db.productos
+      .where("codigo_barras")
+      .equals(codigoLimpio)
+      .first();
+
+    if (!producto && codigoLimpio.length >= 7) {
+      const prefijo = codigoLimpio.substring(0, 7);
+      const todos = await db.productos.toArray();
+      producto = todos.find(
+        (p) => p.codigo_barras && p.codigo_barras.startsWith(prefijo),
+      );
+    }
+
+    if (producto) {
+      if (producto.stock <= 0)
+        return alert(`El producto "${producto.nombre}" está agotado.`);
+
+      setCarrito((prev) => {
+        const existe = prev.find((item) => item.id === producto.id);
+        if (existe)
+          return prev.map((item) =>
+            item.id === producto.id
+              ? { ...item, cantidad: item.cantidad + 1 }
+              : item,
+          );
+        return [...prev, { ...producto, cantidad: 1 }];
+      });
+
+      if ("speechSynthesis" in window) {
+        const msg = new SpeechSynthesisUtterance(
+          `1 ${producto.nombre} agregado`,
+        );
+        msg.lang = "es-CO";
+        window.speechSynthesis.speak(msg);
+      }
+    } else {
+      setBusqueda(codigoLimpio);
+      alert(`Código "${codigoLimpio}" no está registrado en el inventario.`);
+    }
+  };
+
+  const abrirEscaner = async () => {
+    if (Capacitor.isNativePlatform()) {
+      // 📱 ANDROID: Usar ML Kit nativo
+      await escanearConAndroid();
+    } else {
+      // 💻 WINDOWS: Usar Webcam
+      setShowScanner(true);
+    }
+  };
 
   const procesarTextoDictado = (textoOriginal) => {
     console.log("🎤 El micrófono escuchó:", textoOriginal);
@@ -376,6 +517,13 @@ export default function Ventas() {
             >
               {escuchando ? "🔴 Escuchando..." : "🎤 Buscar por voz"}
             </button>
+            <button
+              className="btn-primario"
+              style={{ backgroundColor: "#e67e22" }}
+              onClick={abrirEscaner}
+            >
+              📷 Escanear
+            </button>
           </div>
         </div>
 
@@ -441,6 +589,12 @@ export default function Ventas() {
           ✅ COBRAR Y REGISTRAR VENTA
         </button>
       </div>
+      {showScanner && (
+        <EscanerWebcam
+          onScan={buscarProductoPorCodigo}
+          onClose={() => setShowScanner(false)}
+        />
+      )}
     </div>
   );
 }
