@@ -4,10 +4,8 @@ import { iniciarEscucha, detenerEscucha } from "../utils/voz";
 import { db } from "../db";
 import { Capacitor } from "@capacitor/core";
 import EscanerWebcam from "./EscanearWebcam";
-import { escanearCodigoNativo } from "../utils/camara";
-import { BarcodeScanner } from "@capacitor-mlkit/barcode-scanning"; // <-- NUEVO
+import { escanearCodigoNativo } from "../utils/camara"; // Asegúrate de tener este archivo
 
-// Función mejorada para quitar tildes, mayúsculas y signos de puntuación
 const normalizarTexto = (texto) => {
   return texto
     .normalize("NFD")
@@ -69,61 +67,6 @@ const palabrasRelleno = [
   "y",
 ];
 
-// const buscarProductoPorCodigo = async (codigoEscaneado) => {
-//   // 1. Búsqueda exacta
-//   let producto = await db.productos
-//     .where("codigo_barras")
-//     .equals(codigoEscaneado)
-//     .first();
-
-//   // 2. Búsqueda por prefijo (primeros 7 dígitos)
-//   if (!producto && codigoEscaneado.length >= 7) {
-//     const prefijo = codigoEscaneado.substring(0, 7);
-//     const todos = await db.productos.toArray();
-//     producto = todos.find(
-//       (p) => p.codigo_barras && p.codigo_barras.startsWith(prefijo),
-//     );
-//   }
-
-//   if (producto) {
-//     if (producto.stock <= 0)
-//       return alert(`El producto "${producto.nombre}" está agotado.`);
-
-//     setCarrito((prev) => {
-//       const existe = prev.find((item) => item.id === producto.id);
-//       if (existe)
-//         return prev.map((item) =>
-//           item.id === producto.id
-//             ? { ...item, cantidad: item.cantidad + 1 }
-//             : item,
-//         );
-//       return [...prev, { ...producto, cantidad: 1 }];
-//     });
-
-//     if ("speechSynthesis" in window) {
-//       const msg = new SpeechSynthesisUtterance(`1 ${producto.nombre} agregado`);
-//       msg.lang = "es-CO";
-//       window.speechSynthesis.speak(msg);
-//     }
-//   } else {
-//     setBusqueda(codigoEscaneado); // Lo pone en el buscador manual para asociarlo
-//     alert(
-//       `Código "${codigoEscaneado}" no registrado. Búscalo manualmente y guárdalo en el inventario.`,
-//     );
-//   }
-// };
-
-// const abrirEscaner = async () => {
-//   if (Capacitor.isNativePlatform()) {
-//     // Android: Usa cámara nativa
-//     const codigo = await escanearCodigoNativo();
-//     if (codigo) buscarProductoPorCodigo(codigo);
-//   } else {
-//     // Windows: Usa la webcam
-//     setShowScanner(true);
-//   }
-// };
-
 const extraerCantidadYProducto = (textoOriginal) => {
   const textoNorm = normalizarTexto(textoOriginal);
   let palabras = textoNorm.split(" ");
@@ -159,38 +102,114 @@ export default function Ventas() {
   const [mostrarLista, setMostrarLista] = useState(false);
   const [showScanner, setShowScanner] = useState(false);
 
-  const escanearConAndroid = async () => {
-    try {
-      // 1. Pedir permisos de cámara al sistema
-      const { camera } = await BarcodeScanner.requestPermissions();
+  const cantidadInputRef = useRef(null);
+  const productos = useLiveQuery(() => db.productos.toArray()) || [];
 
-      if (camera === "granted" || camera === "limited") {
-        // 2. Abrir el escáner nativo de Google
-        const { barcodes } = await BarcodeScanner.scan();
+  const procesarTextoDictado = (textoOriginal) => {
+    const { cantidad: cantidadDictada, textoLimpio } =
+      extraerCantidadYProducto(textoOriginal);
+    const textoNorm = normalizarTexto(textoLimpio);
 
-        // 3. Si detectó un código, procesarlo
-        if (barcodes.length > 0) {
-          const codigo = barcodes[0].rawValue;
-          buscarProductoPorCodigo(codigo);
-        }
-      } else {
-        alert(
-          "Permiso de cámara denegado. Debes activarlo en los ajustes de tu teléfono.",
-        );
+    if (!textoNorm || textoNorm.length < 2) return;
+
+    const coincidencias = productos.filter((p) => {
+      if (p.stock <= 0) return false;
+
+      const nombreNorm = normalizarTexto(p.nombre);
+      const codigoStr = p.codigo_barras
+        ? p.codigo_barras.toString().trim()
+        : "";
+
+      // Buscar por nombre o por código de barras
+      if (nombreNorm.includes(textoNorm) || textoNorm.includes(nombreNorm))
+        return true;
+      if (codigoStr && codigoStr.includes(textoNorm)) return true;
+
+      const palabrasBuscadas = textoNorm.split(" ").filter((w) => w.length > 2);
+      if (
+        palabrasBuscadas.length > 0 &&
+        palabrasBuscadas.every((w) => nombreNorm.includes(w))
+      ) {
+        return true;
       }
-    } catch (error) {
-      console.error("Error al escanear en Android:", error);
-      alert("Hubo un error al abrir el escáner.");
+      return false;
+    });
+
+    if (coincidencias.length === 1) {
+      const prod = coincidencias[0];
+      if (cantidadDictada > prod.stock)
+        return alert(
+          `No hay suficiente stock de ${prod.nombre}. Solo quedan ${prod.stock}.`,
+        );
+
+      setCarrito((prev) => {
+        const existe = prev.find((item) => item.id === prod.id);
+        if (existe) {
+          const nuevaCantidad = existe.cantidad + cantidadDictada;
+          if (nuevaCantidad > prod.stock) {
+            alert(
+              `No hay suficiente stock. Ya tienes ${existe.cantidad} en el carrito.`,
+            );
+            return prev;
+          }
+          return prev.map((item) =>
+            item.id === prod.id ? { ...item, cantidad: nuevaCantidad } : item,
+          );
+        }
+        return [...prev, { ...prod, cantidad: cantidadDictada }];
+      });
+
+      setBusqueda("");
+      setMostrarLista(false);
+
+      if ("speechSynthesis" in window) {
+        try {
+          const msg = new SpeechSynthesisUtterance(
+            `${cantidadDictada} ${prod.nombre} agregado.`,
+          );
+          msg.lang = "es-CO";
+          window.speechSynthesis.speak(msg);
+        } catch (e) {}
+      }
+    } else if (coincidencias.length > 1) {
+      setBusqueda(textoLimpio);
+      setMostrarLista(true);
+      alert(`Se encontraron varios productos. Selecciona uno de la lista.`);
+    } else {
+      alert(`❌ No se encontró ningún producto con "${textoLimpio}".`);
     }
   };
 
-  const cantidadInputRef = useRef(null);
-  const productos = useLiveQuery(() => db.productos.toArray()) || [];
+  const iniciarVoz = async () => {
+    if (escuchando) {
+      await detenerEscucha();
+      setEscuchando(false);
+      return;
+    }
+    setEscuchando(true);
+    try {
+      await iniciarEscucha(
+        (texto) => procesarTextoDictado(texto),
+        () => setEscuchando(false),
+      );
+    } catch (error) {
+      console.error("Error al iniciar micrófono:", error);
+      setEscuchando(false);
+    }
+  };
+
+  const abrirEscaner = async () => {
+    if (Capacitor.isNativePlatform()) {
+      const codigo = await escanearCodigoNativo();
+      if (codigo) buscarProductoPorCodigo(codigo);
+    } else {
+      setShowScanner(true);
+    }
+  };
 
   const buscarProductoPorCodigo = async (codigoEscaneado) => {
     if (!codigoEscaneado) return;
     const codigoLimpio = codigoEscaneado.trim();
-    console.log("Código escaneado:", codigoLimpio);
 
     let producto = await db.productos
       .where("codigo_barras")
@@ -219,157 +238,22 @@ export default function Ventas() {
           );
         return [...prev, { ...producto, cantidad: 1 }];
       });
-
-      if ("speechSynthesis" in window) {
-        const msg = new SpeechSynthesisUtterance(
-          `1 ${producto.nombre} agregado`,
-        );
-        msg.lang = "es-CO";
-        window.speechSynthesis.speak(msg);
-      }
     } else {
       setBusqueda(codigoLimpio);
-      alert(`Código "${codigoLimpio}" no está registrado en el inventario.`);
-    }
-  };
-
-  const abrirEscaner = async () => {
-    if (Capacitor.isNativePlatform()) {
-      // 📱 ANDROID: Usar ML Kit nativo
-      await escanearConAndroid();
-    } else {
-      // 💻 WINDOWS: Usar Webcam
-      setShowScanner(true);
-    }
-  };
-
-  const procesarTextoDictado = (textoOriginal) => {
-    console.log("🎤 El micrófono escuchó:", textoOriginal);
-
-    const { cantidad: cantidadDictada, textoLimpio } =
-      extraerCantidadYProducto(textoOriginal);
-    const textoNorm = normalizarTexto(textoLimpio);
-
-    console.log(
-      "🔍 Buscando producto:",
-      textoNorm,
-      "| Cantidad:",
-      cantidadDictada,
-    );
-
-    if (!textoNorm || textoNorm.length < 2) {
-      console.warn("⚠️ El texto era muy corto o solo ruido.");
-      return;
-    }
-
-    // Búsqueda tolerante a errores
-    const coincidencias = productos.filter((p) => {
-      if (p.stock <= 0) return false;
-      const nombreNorm = normalizarTexto(p.nombre);
-
-      // Si lo que dijiste está en el nombre del producto (ej: "coca" -> "Coca Cola")
-      if (nombreNorm.includes(textoNorm)) return true;
-
-      // Si el nombre del producto está en lo que dijiste (ej: "pan tajado" -> "pan")
-      if (textoNorm.includes(nombreNorm)) return true;
-
-      // Búsqueda por palabras individuales
-      const palabrasBuscadas = textoNorm.split(" ").filter((w) => w.length > 2);
-      if (
-        palabrasBuscadas.length > 0 &&
-        palabrasBuscadas.every((w) => nombreNorm.includes(w))
-      ) {
-        return true;
-      }
-
-      return false;
-    });
-
-    console.log(
-      "📦 Productos encontrados:",
-      coincidencias.map((p) => p.nombre),
-    );
-
-    if (coincidencias.length === 1) {
-      const prod = coincidencias[0];
-
-      if (cantidadDictada > prod.stock) {
-        return alert(
-          `No hay suficiente stock de ${prod.nombre}. Solo quedan ${prod.stock}.`,
-        );
-      }
-
-      // 🟢 SOLUCIÓN AL BUG DE LA TABLA: Usar función de estado previo
-      setCarrito((prevCarrito) => {
-        const existe = prevCarrito.find((item) => item.id === prod.id);
-
-        if (existe) {
-          const nuevaCantidad = existe.cantidad + cantidadDictada;
-          if (nuevaCantidad > prod.stock) {
-            alert(
-              `No hay suficiente stock. Ya tienes ${existe.cantidad} en el carrito.`,
-            );
-            return prevCarrito; // No hacer cambios
-          }
-          // Actualizar cantidad si ya existe
-          return prevCarrito.map((item) =>
-            item.id === prod.id ? { ...item, cantidad: nuevaCantidad } : item,
-          );
-        } else {
-          // Añadir nuevo producto al final de la lista
-          return [...prevCarrito, { ...prod, cantidad: cantidadDictada }];
-        }
-      });
-
-      setBusqueda("");
-      setMostrarLista(false);
-
-      if ("speechSynthesis" in window) {
-        try {
-          const msg = new SpeechSynthesisUtterance(
-            `${cantidadDictada} ${prod.nombre} agregado.`,
-          );
-          msg.lang = "es-CO";
-          window.speechSynthesis.speak(msg);
-        } catch (e) {}
-      } else {
-        alert(`✅ ${cantidadDictada} ${prod.nombre} agregado(s).`);
-      }
-    } else if (coincidencias.length > 1) {
-      setBusqueda(textoLimpio);
-      setMostrarLista(true);
-      alert(`Se encontraron varios productos. Selecciona uno de la lista.`);
-    } else {
-      alert(`❌ No se encontró ningún producto con "${textoLimpio}".`);
-    }
-  };
-
-  const iniciarVoz = async () => {
-    if (escuchando) {
-      await detenerEscucha();
-      setEscuchando(false);
-      return;
-    }
-
-    setEscuchando(true);
-    try {
-      await iniciarEscucha(
-        (texto) => procesarTextoDictado(texto),
-        () => setEscuchando(false),
+      alert(
+        `Código "${codigoLimpio}" no registrado. Búscalo manualmente y guárdalo en el inventario.`,
       );
-    } catch (error) {
-      console.error("Error al iniciar micrófono:", error);
-      setEscuchando(false);
     }
   };
 
   const agregarAlCarrito = () => {
-    const prod = productos.find((p) => p.nombre === busqueda);
+    const prod = productos.find(
+      (p) => p.nombre === busqueda || p.codigo_barras === busqueda,
+    );
     if (!prod) return alert("Seleccione un producto válido de la lista");
     if (cantidad > prod.stock)
       return alert(`No hay suficiente stock. Solo quedan ${prod.stock}.`);
 
-    // 🟢 También aplicamos la solución aquí por seguridad
     setCarrito((prevCarrito) => {
       const existe = prevCarrito.find((item) => item.id === prod.id);
       if (existe) {
@@ -383,9 +267,8 @@ export default function Ventas() {
         return prevCarrito.map((item) =>
           item.id === prod.id ? { ...item, cantidad: nuevaCantidad } : item,
         );
-      } else {
-        return [...prevCarrito, { ...prod, cantidad }];
       }
+      return [...prevCarrito, { ...prod, cantidad }];
     });
 
     setBusqueda("");
@@ -425,7 +308,6 @@ export default function Ventas() {
           }
         },
       );
-
       alert("✅ Venta registrada exitosamente");
       setCarrito([]);
     } catch (error) {
@@ -434,11 +316,22 @@ export default function Ventas() {
     }
   };
 
-  const productosFiltrados = productos.filter(
-    (p) =>
-      p.stock > 0 &&
-      normalizarTexto(p.nombre).includes(normalizarTexto(busqueda)),
-  );
+  // 🟢 AQUÍ ESTÁ LA MAGIA: Búsqueda por Nombre O por Código de Barras
+  const productosFiltrados = productos.filter((p) => {
+    if (p.stock <= 0) return false;
+
+    const busquedaNorm = normalizarTexto(busqueda);
+    const nombreNorm = normalizarTexto(p.nombre);
+    const codigoStr = p.codigo_barras ? p.codigo_barras.toString().trim() : "";
+
+    // 1. Coincide con el Nombre
+    const coincideNombre = nombreNorm.includes(busquedaNorm);
+
+    // 2. Coincide con el Código de Barras (Búsqueda exacta o parcial)
+    const coincideCodigo = codigoStr && codigoStr.includes(busqueda.trim());
+
+    return coincideNombre || coincideCodigo;
+  });
 
   const totalVenta = carrito.reduce(
     (acc, item) => acc + item.precio * item.cantidad,
@@ -452,7 +345,7 @@ export default function Ventas() {
           <h2>Agregar Producto</h2>
 
           <div className="input-group buscador-container">
-            <label>Producto:</label>
+            <label>Producto (Nombre o Código):</label>
             <input
               id="input-busqueda"
               className="venta-producto-input"
@@ -464,7 +357,7 @@ export default function Ventas() {
               }}
               onFocus={() => setMostrarLista(true)}
               onBlur={() => setTimeout(() => setMostrarLista(false), 150)}
-              placeholder="Escriba o dicte: 'Quiero 2 panes'"
+              placeholder="Ej: Pan, 770123..."
               autoComplete="off"
             />
 
@@ -475,12 +368,26 @@ export default function Ventas() {
                     key={p.id}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setBusqueda(p.nombre);
+                      setBusqueda(p.nombre); // Si hace clic, lo pasa al nombre
                       setMostrarLista(false);
                       setTimeout(() => cantidadInputRef.current?.focus(), 50);
                     }}
                   >
-                    <span className="res-nombre">{p.nombre}</span>
+                    <div>
+                      <span className="res-nombre">{p.nombre}</span>
+                      {/* Mostrar el código de barras si tiene */}
+                      {p.codigo_barras && (
+                        <span
+                          style={{
+                            display: "block",
+                            fontSize: "11px",
+                            color: "#888",
+                          }}
+                        >
+                          Cód: {p.codigo_barras}
+                        </span>
+                      )}
+                    </div>
                     <div className="res-info">
                       <span className="res-precio">${p.precio}</span>
                       <span
@@ -509,13 +416,13 @@ export default function Ventas() {
 
           <div className="acciones-venta">
             <button className="btn-add" onClick={agregarAlCarrito}>
-              ➕ Añadir a la lista
+              ➕ Añadir
             </button>
             <button
               className={`btn-voz-busqueda ${escuchando ? "escuchando" : ""}`}
               onClick={iniciarVoz}
             >
-              {escuchando ? "🔴 Escuchando..." : "🎤 Buscar por voz"}
+              {escuchando ? "🔴 Escuchando..." : "🎤 Voz"}
             </button>
             <button
               className="btn-primario"
@@ -589,6 +496,7 @@ export default function Ventas() {
           ✅ COBRAR Y REGISTRAR VENTA
         </button>
       </div>
+
       {showScanner && (
         <EscanerWebcam
           onScan={buscarProductoPorCodigo}

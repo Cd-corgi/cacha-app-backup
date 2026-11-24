@@ -38,16 +38,18 @@ export default function Inventario() {
   // --- ESTADOS PARA EL MODAL DE CARGA MASIVA ---
   const [showBulkModal, setShowBulkModal] = useState(false);
   const [bulkItems, setBulkItems] = useState([]);
-  const [representante, setRepresentante] = useState(""); // <-- NUEVO CAMPO
+  const [representante, setRepresentante] = useState("");
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const transcriptRef = useRef("");
 
   const productos = useLiveQuery(() => db.productos.toArray()) || [];
 
+  // --- CRUD PRODUCTO INDIVIDUAL ---
   const guardarProducto = async () => {
     if (!nuevoProd.nombre || !nuevoProd.precio || !nuevoProd.stock)
-      return alert("Llene los campos");
+      return alert("Llene los campos obligatorios");
+
     await db.productos.add({
       nombre: nuevoProd.nombre,
       codigo_barras: nuevoProd.codigo_barras.trim() || null,
@@ -55,6 +57,7 @@ export default function Inventario() {
       stock: parseInt(nuevoProd.stock),
       fecha_vencimiento: nuevoProd.fecha_vencimiento || "Sin fecha",
     });
+
     setNuevoProd({
       nombre: "",
       codigo_barras: "",
@@ -113,6 +116,7 @@ export default function Inventario() {
             nombreProducto.charAt(0).toUpperCase() + nombreProducto.slice(1),
           cantidad: cantidad,
           precio: "",
+          codigo_barras: "",
           fecha_vencimiento: "",
         });
       }
@@ -120,6 +124,7 @@ export default function Inventario() {
     return nuevosItems;
   };
 
+  // --- LÓGICA DE VOZ MASIVA ---
   const toggleDictado = async () => {
     if (isListening) {
       await detenerEscucha();
@@ -186,7 +191,7 @@ export default function Inventario() {
           const facturaId = await db.facturas_ingreso.add({
             fecha: new Date().toISOString(),
             total: totalFactura,
-            representante: representante.trim(), // <-- GUARDAMOS EL REPRESENTANTE
+            representante: representante.trim(),
           });
 
           for (const item of bulkItems) {
@@ -206,9 +211,14 @@ export default function Inventario() {
               const nuevaFecha = item.fecha_vencimiento
                 ? item.fecha_vencimiento
                 : prodExistente.fecha_vencimiento;
+              const nuevoCodigo = item.codigo_barras.trim()
+                ? item.codigo_barras.trim()
+                : prodExistente.codigo_barras;
+
               await db.productos.update(prodExistente.id, {
                 stock: prodExistente.stock + item.cantidad,
                 fecha_vencimiento: nuevaFecha,
+                codigo_barras: nuevoCodigo,
               });
             } else {
               await db.productos.add({
@@ -216,6 +226,7 @@ export default function Inventario() {
                 precio: parseFloat(item.precio),
                 stock: item.cantidad,
                 fecha_vencimiento: item.fecha_vencimiento || "Sin fecha",
+                codigo_barras: item.codigo_barras.trim() || null,
               });
             }
           }
@@ -224,7 +235,7 @@ export default function Inventario() {
 
       alert("✅ Factura de ingreso registrada y stock actualizado.");
       setBulkItems([]);
-      setRepresentante(""); // Limpiamos el campo
+      setRepresentante("");
       setShowBulkModal(false);
     } catch (error) {
       console.error(error);
@@ -232,13 +243,36 @@ export default function Inventario() {
     }
   };
 
+  // --- ORDENAMIENTO DE LA TABLA PRINCIPAL (LÓGICA FIFO MEJORADA) ---
   let prodsMostrar = [...productos];
-  if (orden === "fifo")
-    prodsMostrar.sort((a, b) =>
-      a.fecha_vencimiento === "Sin fecha"
-        ? 1
-        : new Date(a.fecha_vencimiento) - new Date(b.fecha_vencimiento),
-    );
+
+  if (orden === "fifo") {
+    prodsMostrar.sort((a, b) => {
+      const fechaA = a.fecha_vencimiento;
+      const fechaB = b.fecha_vencimiento;
+
+      // 1. Si ambos son "Sin fecha", mantener el orden
+      if (fechaA === "Sin fecha" && fechaB === "Sin fecha") return 0;
+
+      // 2. Si 'a' no tiene fecha, va al final (1 significa que va después)
+      if (fechaA === "Sin fecha") return 1;
+
+      // 3. Si 'b' no tiene fecha, va al final (-1 significa que va antes)
+      if (fechaB === "Sin fecha") return -1;
+
+      // 4. Si ambos tienen fecha, comparar cronológicamente
+      const dateA = new Date(fechaA);
+      const dateB = new Date(fechaB);
+
+      // Validación por si hay fechas corruptas
+      if (isNaN(dateA.getTime()) && isNaN(dateB.getTime())) return 0;
+      if (isNaN(dateA.getTime())) return 1;
+      if (isNaN(dateB.getTime())) return -1;
+
+      return dateA - dateB; // Ascendente: el más cercano a vencer va primero
+    });
+  }
+
   if (orden === "nombre")
     prodsMostrar.sort((a, b) => a.nombre.localeCompare(b.nombre));
   if (orden === "stock-asc") prodsMostrar.sort((a, b) => a.stock - b.stock);
@@ -266,6 +300,7 @@ export default function Inventario() {
         </button>
       </div>
 
+      {/* FORMULARIO INDIVIDUAL */}
       <div className="card">
         <h3>Añadir Producto Individual</h3>
         <div className="form-grid">
@@ -314,6 +349,7 @@ export default function Inventario() {
         </button>
       </div>
 
+      {/* FILTROS */}
       <div className="barra-filtros">
         <div
           className="filtro-item"
@@ -321,7 +357,9 @@ export default function Inventario() {
         >
           <label>Organizar por: </label>
           <select value={orden} onChange={(e) => setOrden(e.target.value)}>
-            <option value="fifo">Vencimiento (FIFO)</option>
+            <option value="fifo">
+              Vencimiento (FIFO - Más próximos primero)
+            </option>
             <option value="nombre">Nombre (A-Z)</option>
             <option value="stock-asc">Menor Stock</option>
             <option value="stock-desc">Mayor Stock</option>
@@ -329,11 +367,13 @@ export default function Inventario() {
         </div>
       </div>
 
+      {/* TABLA PRINCIPAL */}
       <div className="table-responsive">
         <table>
           <thead>
             <tr>
               <th>Producto</th>
+              <th>Código</th>
               <th>Precio</th>
               <th>Stock</th>
               <th>Vence</th>
@@ -344,6 +384,7 @@ export default function Inventario() {
             {prodsMostrar.map((p) => (
               <tr key={p.id}>
                 <td>{p.nombre}</td>
+                <td>{p.codigo_barras || "-"}</td>
                 <td>${p.precio}</td>
                 <td
                   style={{
@@ -354,7 +395,7 @@ export default function Inventario() {
                   {p.stock}
                 </td>
                 <td>{p.fecha_vencimiento}</td>
-                <td>
+                <td style={{ whiteSpace: "nowrap" }}>
                   <button
                     className="btn-accion btn-editar"
                     onClick={() => setEditando(p)}
@@ -379,52 +420,103 @@ export default function Inventario() {
         <div className="modal-overlay active">
           <div className="modal-contenido">
             <h3>Editar Producto</h3>
-            <input
-              type="text"
-              value={editando.nombre}
-              onChange={(e) =>
-                setEditando({ ...editando, nombre: e.target.value })
-              }
-              style={{ marginBottom: "10px" }}
-            />
-            <input
-              type="number"
-              value={editando.precio}
-              onChange={(e) =>
-                setEditando({ ...editando, precio: parseFloat(e.target.value) })
-              }
-              style={{ marginBottom: "10px" }}
-            />
-            <input
-              type="text"
-              placeholder="Código de Barras"
-              value={editando.codigo_barras || ""}
-              onChange={(e) =>
-                setEditando({ ...editando, codigo_barras: e.target.value })
-              }
-              style={{ marginBottom: "10px" }}
-            />
-            <input
-              type="number"
-              value={editando.stock}
-              onChange={(e) =>
-                setEditando({ ...editando, stock: parseInt(e.target.value) })
-              }
-              style={{ marginBottom: "10px" }}
-            />
-            <input
-              type="date"
-              value={
-                editando.fecha_vencimiento !== "Sin fecha"
-                  ? editando.fecha_vencimiento
-                  : ""
-              }
-              onChange={(e) =>
-                setEditando({ ...editando, fecha_vencimiento: e.target.value })
-              }
-              style={{ marginBottom: "10px" }}
-            />
-            <div className="modal-botones">...</div>
+
+            <div
+              className="input-group"
+              style={{ marginBottom: "10px", textAlign: "left" }}
+            >
+              <label>Nombre:</label>
+              <input
+                type="text"
+                value={editando.nombre}
+                onChange={(e) =>
+                  setEditando({ ...editando, nombre: e.target.value })
+                }
+              />
+            </div>
+
+            <div
+              className="input-group"
+              style={{ marginBottom: "10px", textAlign: "left" }}
+            >
+              <label>Código de Barras:</label>
+              <input
+                type="text"
+                value={editando.codigo_barras || ""}
+                onChange={(e) =>
+                  setEditando({ ...editando, codigo_barras: e.target.value })
+                }
+              />
+            </div>
+
+            <div
+              className="input-group"
+              style={{ marginBottom: "10px", textAlign: "left" }}
+            >
+              <label>Precio:</label>
+              <input
+                type="number"
+                value={editando.precio}
+                onChange={(e) =>
+                  setEditando({
+                    ...editando,
+                    precio: parseFloat(e.target.value),
+                  })
+                }
+              />
+            </div>
+
+            <div
+              className="input-group"
+              style={{ marginBottom: "10px", textAlign: "left" }}
+            >
+              <label>Stock:</label>
+              <input
+                type="number"
+                value={editando.stock}
+                onChange={(e) =>
+                  setEditando({ ...editando, stock: parseInt(e.target.value) })
+                }
+              />
+            </div>
+
+            <div
+              className="input-group"
+              style={{ marginBottom: "10px", textAlign: "left" }}
+            >
+              <label>Fecha de Vencimiento:</label>
+              <input
+                type="date"
+                value={
+                  editando.fecha_vencimiento !== "Sin fecha"
+                    ? editando.fecha_vencimiento
+                    : ""
+                }
+                onChange={(e) =>
+                  setEditando({
+                    ...editando,
+                    fecha_vencimiento: e.target.value,
+                  })
+                }
+              />
+            </div>
+
+            <div className="modal-botones">
+              <button
+                type="button"
+                className="btn-cancelar"
+                onClick={() => setEditando(null)}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                className="btn-primario"
+                onClick={guardarEdicion}
+              >
+                Guardar
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -437,7 +529,6 @@ export default function Inventario() {
               📦 Factura de Ingreso
             </h2>
 
-            {/* NUEVO CAMPO: REPRESENTANTE */}
             <div className="input-group" style={{ marginBottom: "15px" }}>
               <label>Representante / Proveedor del ingreso:</label>
               <input
@@ -483,19 +574,18 @@ export default function Inventario() {
                 className="table-responsive"
                 style={{ marginBottom: "15px" }}
               >
-                <table style={{ minWidth: "700px" }}>
+                <table style={{ minWidth: "850px" }}>
                   <thead>
                     <tr>
                       <th>Producto</th>
-                      <th style={{ width: "80px", textAlign: "center" }}>
+                      <th style={{ width: "70px", textAlign: "center" }}>
                         Cant.
                       </th>
-                      <th style={{ width: "120px" }}>Precio Unit. ($)</th>
-                      <th style={{ width: "150px" }}>Vencimiento</th>
-                      <th style={{ width: "100px" }}>Subtotal</th>
-                      <th style={{ width: "60px", textAlign: "center" }}>
-                        Acción
-                      </th>
+                      <th style={{ width: "110px" }}>Precio U. ($)</th>
+                      <th style={{ width: "130px" }}>Cód. Barras</th>
+                      <th style={{ width: "140px" }}>Vencimiento</th>
+                      <th style={{ width: "90px" }}>Subtotal</th>
+                      <th style={{ width: "50px", textAlign: "center" }}>X</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -538,6 +628,21 @@ export default function Inventario() {
                               actualizarCampo(index, "precio", e.target.value)
                             }
                             placeholder="0.00"
+                            style={{ padding: "8px", width: "100%" }}
+                          />
+                        </td>
+                        <td>
+                          <input
+                            type="text"
+                            value={item.codigo_barras || ""}
+                            onChange={(e) =>
+                              actualizarCampo(
+                                index,
+                                "codigo_barras",
+                                e.target.value,
+                              )
+                            }
+                            placeholder="Opcional"
                             style={{ padding: "8px", width: "100%" }}
                           />
                         </td>
