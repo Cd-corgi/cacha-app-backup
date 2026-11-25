@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:exe": "npx pkg dist/server.js --targets node18-win-x64 --output CachaApp.exe && npx create-nodew-exe CachaApp.exe CachaApp.exe",
     "lint": "eslint .",
     "preview": "vite preview",
     "electron:dev": "concurrently \"vite\" \"wait-on tcp:5173 && cross-env NODE_ENV=development electron .\"",
@@ -20,6 +21,7 @@
     "@capacitor-community/speech-recognition": "^7.0.1",
     "@capacitor-mlkit/barcode-scanning": "^8.2.2",
     "@capacitor/android": "^8.6.0",
+    "@capacitor/barcode-scanner": "^3.1.4",
     "@capacitor/camera": "^8.2.6",
     "@capacitor/cli": "^8.6.0",
     "@capacitor/core": "^8.6.0",

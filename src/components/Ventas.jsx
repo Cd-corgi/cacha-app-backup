@@ -4,7 +4,7 @@ import { iniciarEscucha, detenerEscucha } from "../utils/voz";
 import { db } from "../db";
 import { Capacitor } from "@capacitor/core";
 import EscanerWebcam from "./EscanearWebcam";
-import { escanearCodigoNativo } from "../utils/camara"; // Asegúrate de tener este archivo
+import { escanearCodigoNativo } from "../utils/camara";
 
 const normalizarTexto = (texto) => {
   return texto
@@ -96,7 +96,8 @@ const extraerCantidadYProducto = (textoOriginal) => {
 export default function Ventas() {
   const [carrito, setCarrito] = useState([]);
   const [busqueda, setBusqueda] = useState("");
-  const [cantidad, setCantidad] = useState(1);
+  // 🟢 AHORA ES UN STRING PARA PERMITIR ESCRITURA LIBRE
+  const [cantidad, setCantidad] = useState("1");
   const [metodoPago, setMetodoPago] = useState("Efectivo");
   const [escuchando, setEscuchando] = useState(false);
   const [mostrarLista, setMostrarLista] = useState(false);
@@ -114,13 +115,11 @@ export default function Ventas() {
 
     const coincidencias = productos.filter((p) => {
       if (p.stock <= 0) return false;
-
       const nombreNorm = normalizarTexto(p.nombre);
       const codigoStr = p.codigo_barras
         ? p.codigo_barras.toString().trim()
         : "";
 
-      // Buscar por nombre o por código de barras
       if (nombreNorm.includes(textoNorm) || textoNorm.includes(nombreNorm))
         return true;
       if (codigoStr && codigoStr.includes(textoNorm)) return true;
@@ -238,6 +237,16 @@ export default function Ventas() {
           );
         return [...prev, { ...producto, cantidad: 1 }];
       });
+
+      if ("speechSynthesis" in window) {
+        try {
+          const msg = new SpeechSynthesisUtterance(
+            `1 ${producto.nombre} agregado`,
+          );
+          msg.lang = "es-CO";
+          window.speechSynthesis.speak(msg);
+        } catch (e) {}
+      }
     } else {
       setBusqueda(codigoLimpio);
       alert(
@@ -251,13 +260,20 @@ export default function Ventas() {
       (p) => p.nombre === busqueda || p.codigo_barras === busqueda,
     );
     if (!prod) return alert("Seleccione un producto válido de la lista");
-    if (cantidad > prod.stock)
+
+    // 🟢 CONVERTIMOS EL STRING A NÚMERO AQUÍ
+    const cantNum = parseInt(cantidad);
+    if (isNaN(cantNum) || cantNum <= 0) {
+      return alert("Por favor, ingrese una cantidad válida mayor a 0.");
+    }
+
+    if (cantNum > prod.stock)
       return alert(`No hay suficiente stock. Solo quedan ${prod.stock}.`);
 
     setCarrito((prevCarrito) => {
       const existe = prevCarrito.find((item) => item.id === prod.id);
       if (existe) {
-        const nuevaCantidad = existe.cantidad + cantidad;
+        const nuevaCantidad = existe.cantidad + cantNum;
         if (nuevaCantidad > prod.stock) {
           alert(
             `No hay suficiente stock. Ya tienes ${existe.cantidad} en el carrito.`,
@@ -268,11 +284,11 @@ export default function Ventas() {
           item.id === prod.id ? { ...item, cantidad: nuevaCantidad } : item,
         );
       }
-      return [...prevCarrito, { ...prod, cantidad }];
+      return [...prevCarrito, { ...prod, cantidad: cantNum }];
     });
 
     setBusqueda("");
-    setCantidad(1);
+    setCantidad("1"); // Resetea al string "1"
     setMostrarLista(false);
     setTimeout(() => document.getElementById("input-busqueda")?.focus(), 50);
   };
@@ -316,20 +332,13 @@ export default function Ventas() {
     }
   };
 
-  // 🟢 AQUÍ ESTÁ LA MAGIA: Búsqueda por Nombre O por Código de Barras
   const productosFiltrados = productos.filter((p) => {
     if (p.stock <= 0) return false;
-
     const busquedaNorm = normalizarTexto(busqueda);
     const nombreNorm = normalizarTexto(p.nombre);
     const codigoStr = p.codigo_barras ? p.codigo_barras.toString().trim() : "";
-
-    // 1. Coincide con el Nombre
     const coincideNombre = nombreNorm.includes(busquedaNorm);
-
-    // 2. Coincide con el Código de Barras (Búsqueda exacta o parcial)
     const coincideCodigo = codigoStr && codigoStr.includes(busqueda.trim());
-
     return coincideNombre || coincideCodigo;
   });
 
@@ -368,14 +377,13 @@ export default function Ventas() {
                     key={p.id}
                     onMouseDown={(e) => {
                       e.preventDefault();
-                      setBusqueda(p.nombre); // Si hace clic, lo pasa al nombre
+                      setBusqueda(p.nombre);
                       setMostrarLista(false);
                       setTimeout(() => cantidadInputRef.current?.focus(), 50);
                     }}
                   >
                     <div>
                       <span className="res-nombre">{p.nombre}</span>
-                      {/* Mostrar el código de barras si tiene */}
                       {p.codigo_barras && (
                         <span
                           style={{
@@ -404,13 +412,16 @@ export default function Ventas() {
 
           <div className="input-group">
             <label>Cantidad:</label>
+            {/* 🟢 INPUT LIBRE CON TECLADO NUMÉRICO EN MÓVILES */}
             <input
               ref={cantidadInputRef}
               id="input-cantidad"
-              type="number"
+              type="text"
+              inputMode="numeric"
+              pattern="[0-9]*"
               value={cantidad}
-              onChange={(e) => setCantidad(parseInt(e.target.value) || 1)}
-              min="1"
+              onChange={(e) => setCantidad(e.target.value)}
+              onFocus={(e) => e.target.select()} // Selecciona todo al enfocar para borrar rápido
             />
           </div>
 

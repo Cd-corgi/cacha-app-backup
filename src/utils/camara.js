@@ -1,33 +1,25 @@
-import { Camera } from "@capacitor/camera";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+// Importación correcta para @capacitor/barcode-scanner
+import {
+  CapacitorBarcodeScanner,
+  CapacitorBarcodeScannerTypeHint,
+} from "@capacitor/barcode-scanner";
 
 export const escanearCodigoNativo = async () => {
   try {
-    // 1. Abre la cámara nativa de Android (API moderna de Capacitor 7+)
-    const photo = await Camera.takePhoto({
-      quality: 90,
-      resultType: "base64", // Necesitamos la imagen en base64 para ZXing
+    // La API oficial usa CapacitorBarcodeScanner.scanBarcode
+    const result = await CapacitorBarcodeScanner.scanBarcode({
+      hint: CapacitorBarcodeScannerTypeHint.ALL, // Escanea todos los formatos
+      cameraDirection: 1, // 1 = Cámara trasera (importante en Android)
     });
 
-    if (!photo.base64String) return null;
-
-    // 2. Convertir el base64 a un objeto Image de HTML
-    const img = new Image();
-    img.src = `data:image/jpeg;base64,${photo.base64String}`;
-
-    // 3. Esperar a que la imagen cargue completamente en memoria
-    await new Promise((resolve) => {
-      img.onload = resolve;
-    });
-
-    // 4. Leer el código de barras con ZXing
-    const codeReader = new BrowserMultiFormatReader();
-    const result = await codeReader.decodeFromImageElement(img);
-
-    return result.getText().trim();
+    // El resultado viene en la propiedad ScanResult
+    if (result && result.ScanResult) {
+      return result.ScanResult.trim();
+    }
+    return null;
   } catch (error) {
-    // Si el usuario cancela la cámara o ZXing no detecta nada, caerá aquí
-    console.log("Escaneo cancelado o código no detectado:", error);
+    // Si el usuario cancela o hay un error
+    console.log("Escaneo cancelado o error:", error);
     return null;
   }
 };
